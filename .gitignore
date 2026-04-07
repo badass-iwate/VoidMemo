@@ -1,0 +1,34 @@
+# Python 仮想環境
+.venv/
+
+# メモファイル（個人データのため管理対象外）
+notes/
+
+# 並び順設定（ユーザーごとの個人設定のため対象外）
+assets/note_order.json
+
+# Python キャッシュ
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python パッケージビルド関連
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ログファイル
+*.log
+
+# IDE / エディタ設定
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS 生成ファイル
+.DS_Store
+Thumbs.db
+desktop.ini
