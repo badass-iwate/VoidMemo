@@ -1,5 +1,7 @@
 # VoidMemo
 
+![VoidMemo Screenshot](assets/screenshot.png)
+
 ![Windows 11 Compatible](https://img.shields.io/badge/OS-Windows%2011-blue)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![CustomTkinter](https://img.shields.io/badge/GUI-CustomTkinter-blue)
