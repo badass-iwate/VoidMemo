@@ -24,66 +24,73 @@ def ensure_notes_dir() -> None:
 
 
 # ------------------------------------------------------------------
-# 並び順の永続化
+# 並び順と階層構造（ツリー）の永続化
 # ------------------------------------------------------------------
 
-def load_order() -> list[str]:
+def load_tree() -> list[dict]:
     """
-    assets/note_order.json から並び順（ファイル名リスト）を読み込む。
-    ファイルが存在しない場合や読み込み失敗時は空リストを返す。
-
-    Returns:
-        list[str]: 保存されたファイル名（拡張子付き）の順序リスト
+    assets/note_order.json からツリー構造を読み込む。
+    各ノードは {"filename": str, "is_open": bool, "children": list} の形式。
+    古いフラットなリスト形式があった場合は自動的に移行する。
     """
     try:
         if ORDER_FILE.exists():
-            return json.loads(ORDER_FILE.read_text(encoding="utf-8"))
+            data = json.loads(ORDER_FILE.read_text(encoding="utf-8"))
+            if data and isinstance(data[0], str):
+                # 移行処理
+                return [{"filename": name, "is_open": False, "children": []} for name in data]
+            return data
     except (json.JSONDecodeError, OSError):
         pass
     return []
 
 
-def save_order(order: list[Path]) -> None:
+def save_tree(tree: list[dict]) -> None:
     """
-    並び順を assets/note_order.json へ保存する。
-
-    Args:
-        order: 保存したい順序のPathオブジェクトリスト
+    ツリー構造を assets/note_order.json へ保存する。
     """
     try:
         ORDER_FILE.parent.mkdir(parents=True, exist_ok=True)
-        names = [p.name for p in order]
-        ORDER_FILE.write_text(json.dumps(names, ensure_ascii=False, indent=2), encoding="utf-8")
+        ORDER_FILE.write_text(json.dumps(tree, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         pass
 
 
-def list_notes() -> list[Path]:
+def get_file_tree() -> list[dict]:
     """
-    notes/ フォルダ内の .txt ファイル一覧を返す。
-    assets/note_order.json が存在する場合はその順序を優先し、
-    新規ファイル（未登録）は先頭に挿入する。
+    notes/ フォルダ内の .txt ファイルをツリー構造として返す。
+    JSONに存在しない新規ファイルは先頭にトップレベルノードとして追加される。
+    削除されてディスク上に存在しないファイルはツリーから除外される。
 
     Returns:
-        list[Path]: .txt ファイルの Pathオブジェクト一覧
+        list[dict]: 階層構造を表す辞書のリスト
     """
     ensure_notes_dir()
-    all_files = set(NOTES_DIR.glob("*.txt"))
+    all_files = {f.name for f in NOTES_DIR.glob("*.txt")}
 
-    saved_order = load_order()
-    ordered: list[Path] = []
-
-    # JSON に記録された順序で既存ファイルを並べる
+    saved_tree = load_tree()
     known_names: set[str] = set()
-    for name in saved_order:
-        p = NOTES_DIR / name
-        if p in all_files:
-            ordered.append(p)
-            known_names.add(name)
 
-    # JSON に含まれない新規ファイルをソートなしで先頭に追加
-    new_files = [f for f in all_files if f.name not in known_names]
-    return new_files + ordered
+    def process_nodes(nodes: list[dict]) -> list[dict]:
+        valid_nodes = []
+        for node in nodes:
+            fname = node.get("filename")
+            if fname in all_files:
+                known_names.add(fname)
+                node["children"] = process_nodes(node.get("children", []))
+                if "is_open" not in node:
+                    node["is_open"] = False
+                valid_nodes.append(node)
+        return valid_nodes
+
+    valid_tree = process_nodes(saved_tree)
+
+    # JSON に含まれない新規ファイルをトップレベルの先頭に追加
+    new_files = [fname for fname in all_files if fname not in known_names]
+    for fname in new_files:
+        valid_tree.insert(0, {"filename": fname, "is_open": False, "children": []})
+
+    return valid_tree
 
 
 # ------------------------------------------------------------------

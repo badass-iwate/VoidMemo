@@ -1,6 +1,6 @@
 # PROJECT_LOADMAP.md — 開発管理ノート
 
-## プロジェクト: Auto-Save Memo
+## プロジェクト: VoidMemo
 
 ---
 
@@ -17,6 +17,8 @@
 | 7 | 機能拡張: .gitignore 整備 | ✅ 完了 | `.gitignore` — log/egg-info/note_order.json等を追加 |
 | 8 | 機能拡張: DnD ファイル並び替え | ✅ 完了 | `storage.py` + `main.py` — `load_order()`, `save_order()`, `_drag_start/motion/end()` |
 | 9 | 機能拡張: Markdown プレビュー | ✅ 完了 | `main.py` — `_on_tab_change()`, `_render_preview()`, HtmlFrame (tkinterweb) |
+| 10 | 機能拡張: 印刷機能・フォルダ表示 | ✅ 完了 | `main.py` 実装済 |
+| 11 | 機能拡張: UIの階層構造化 (ツリー化) | ✅ 完了 | `main.py`, `logic/storage.py` 実装済 |
 
 ---
 
@@ -24,11 +26,11 @@
 
 | # | 拡張機能 | 優先度 | メモ |
 |---|---------|--------|------|
-| A | ダークモード対応の Markdown プレビュー CSS | 中 | システムテーマに連動したCSSを動的切り替え |
-| B | 検索機能 | 低 | サイドバー上部に検索バーを追加 |
-| C | ファイルの「スター」/「ピン留め」 | 低 | 重要メモを先頭に固定 |
-| D | エクスポート機能 | 低 | PDF または HTML でのエクスポート |
-| E | 複数インスタンス競合対応 | 低 | ファイルロック機構の導入 |
+| 1 | ダークモード対応の Markdown プレビュー CSS | 中 | システムテーマに連動したCSSを動的切り替え |
+| 2 | 検索機能 | 低 | サイドバー上部に検索バーを追加 |
+| 3 | ファイルの「スター」/「ピン留め」 | 低 | 重要メモを先頭に固定 |
+| 4 | エクスポート機能 | 低 | PDF または HTML でのエクスポート |
+| 5 | 複数インスタンス競合対応 | 低 | ファイルロック機構の導入 |
 
 ---
 
@@ -36,7 +38,7 @@
 
 ```powershell
 # プロジェクトフォルダへ移動
-cd c:\Users\storm\MemoOSS
+cd c:\Users\storm\VoidMemo
 
 # 仮想環境を有効化（Windows PowerShell）
 .venv\Scripts\Activate.ps1

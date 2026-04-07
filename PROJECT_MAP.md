@@ -1,4 +1,4 @@
-# PROJECT_MAP.md — Auto-Save Memo
+# PROJECT_MAP.md — VoidMemo
 
 ## プロジェクト概要
 
@@ -19,14 +19,14 @@ Windows 11 のデザインガイドラインに準拠した、自動保存型の
 | ゴミ箱 | send2trash | OSのゴミ箱に送る（完全削除せず復元可能） |
 | Markdown変換 | markdown (Python) | Markdown → HTML 変換 |
 | HTMLレンダリング | tkinterweb | HtmlFrame でプレビュー表示 |
-| 並び順の永続化 | JSON | assets/note_order.json |
+| ツリー構造永続化 | JSON | assets/note_order.json |
 
 ---
 
 ## ディレクトリ構造
 
 ```text
-MemoOSS/
+VoidMemo/
 ├── main.py                    # アプリケーションのメインエントリーポイント
 ├── logic/
 │   ├── __init__.py            # パッケージ初期化
@@ -46,10 +46,10 @@ MemoOSS/
 
 | ファイル | 役割 |
 |---------|------|
-| `main.py` | `App` クラス（CTk サブクラス）を定義。UI 構築・イベント制御・Debounce 自動保存・pywinstyles 適用・ゴミ箱・DnD・Markdown プレビューを担う |
-| `logic/storage.py` | `notes/` フォルダへの CRUD 操作全般、ゴミ箱 (`trash_note`)、並び順の読み書き (`load_order` / `save_order`)、リネームを担当 |
+| `main.py` | `App` クラス（CTk サブクラス）を定義。UI 構築・イベント制御・自動保存・ゴミ箱・階層ツリー描画・印刷機能等を担う |
+| `logic/storage.py` | `notes/` フォルダへの CRUD 操作全般、ゴミ箱 (`trash_note`)、ツリー構造の読み書き (`load_tree` / `save_tree`)、リネームを担当 |
 | `notes/` | ユーザーのメモ (.txt) が実際に保存されるディレクトリ |
-| `assets/note_order.json` | サイドバーのファイル並び順を JSON で永続化するファイル |
+| `assets/note_order.json` | 左メニューのファイル構造（親子関係・開閉状態）を JSON で永続化するファイル |
 | `.venv/` | プロジェクト専用の Python 仮想環境 |
 
 ---
@@ -61,9 +61,11 @@ MemoOSS/
 | 自動保存 (Debounce) | キー入力停止 1秒後に自動保存。タイマーは入力のたびにリセット |
 | タイトル連動 | ファイルの1行目 = タイトルバー表示 = ファイル名（保存時に自動リネーム） |
 | 新規作成 | タイムスタンプ付きファイル名で自動生成（例: `Untitled_20260407_2214.txt`） |
-| ゴミ箱 | ファイルボタンを右クリック → 「ゴミ箱に移動」でOSゴミ箱へ（復元可能） |
-| DnD 並び替え | サイドバーのファイルをドラッグ&ドロップで並び替え。順序は `note_order.json` で永続化 |
+| ゴミ箱 | メニュー右クリック → 「ゴミ箱に移動」でOSゴミ箱へ（復元可能） |
+| 階層構造 (ツリー) | ファイルの親子関係・展開状態を `note_order.json` で永続化。右クリックで直下に新規作成、トップ階層へ移動可能 |
 | Markdown プレビュー | タイトルバー下のタブで「編集」と「プレビュー」を切り替え |
+| 印刷機能 | エディタ画面の 🖨️ アイコンをクリックで現在のテキストを印刷 (`os.startfile(print)`) |
+| フォルダ表示 | エディタ画面の 📁 アイコンをクリックで現在ファイルがあるフォルダを直接開く |
 | Windows 11 Mica | ウィンドウ背景に Mica/Acrylic 半透明効果（非対応環境ではスキップ） |
 | システムテーマ追従 | ライト/ダークモードをOSの設定に自動追従 |
 
@@ -94,11 +96,12 @@ MemoOSS/
 - 保存時に1行目が変化していた場合 `storage.rename_note()` を呼び出してリネーム
 - 並び順 JSON 内のパスも同時に更新
 
-### DnD 並び替え
+### 階層ツリー (階層構造) 永続化
 
-1. `<ButtonPress-1>` でドラッグ元のインデックス・パスを記録
-2. `<B1-Motion>` で `DRAG_THRESHOLD`(6px) を超えたら `Toplevel` ゴーストを生成・追従
-3. `<ButtonRelease-1>` でドロップ先インデックスを計算、新順序を `save_order()` で保存
+1. メニュー再描画時に `logic.storage.get_file_tree()` によりツリー全体を取得
+2. UIツリー描画関数 `_render_tree_nodes()` によりインデントを描画、フォルダトグルアイコンを表示
+3. `is_open` ステータスや展開・開閉、新規ツリー挿入などの操作が行われるたびに `save_tree()` により `note_order.json` を更新
+4. 右クリックメニューから新規サブファイル作成、トップ階層への配置変更が可能
 
 ### Markdown プレビュー
 
