@@ -15,7 +15,7 @@ import send2trash
 # メモが保存されるフォルダのパス
 NOTES_DIR: Path = Path(__file__).parent.parent / "notes"
 # 並び順を保持するJSONファイルのパス
-ORDER_FILE: Path = Path(__file__).parent.parent / "assets" / "note_order.json"
+ORDER_FILE: Path = Path(__file__).parent.parent / "notes" / "note_order.json"
 
 
 def ensure_notes_dir() -> None:

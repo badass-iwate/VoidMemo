@@ -5,7 +5,7 @@
 notes/
 
 # 並び順設定（ユーザーごとの個人設定のため対象外）
-assets/note_order.json
+# 並び順設定（notesフォルダ配下になったため上記でカバー済）
 
 # Python キャッシュ
 __pycache__/

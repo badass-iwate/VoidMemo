@@ -43,15 +43,16 @@ except ImportError:
 
 # logic モジュールの読み込み
 sys.path.insert(0, str(Path(__file__).parent))
-from logic import storage
+from logic import storage, todo
 
 # ====================================================================
 # 定数定義
 # ====================================================================
 APP_TITLE         = "VoidMemo"      # ウィンドウタイトル
-WINDOW_MIN_WIDTH  = 800                    # ウィンドウ最小幅 (px)
+WINDOW_MIN_WIDTH  = 900                    # ウィンドウ最小幅 (px)
 WINDOW_MIN_HEIGHT = 550                    # ウィンドウ最小高 (px)
 SIDEBAR_WIDTH     = 230                    # 左サイドバー幅 (px)
+TODO_PANE_WIDTH   = 240                    # 右TODOペイン幅 (px)
 DEBOUNCE_MS       = 1000                   # 自動保存の待機時間 (ms)
 DEFAULT_PREFIX    = "Untitled"             # 新規ファイルのデフォルト接頭辞
 FONT_FAMILY       = "Yu Gothic UI"         # 本文フォント（日本語対応）
@@ -114,7 +115,8 @@ PREVIEW_CSS = """
 class App(ctk.CTk):
     """
     VoidMemo のメインアプリケーションクラス。
-    左ペイン（ファイル一覧）と右ペイン（エディタ / Markdownプレビュー）で構成され、
+    左ペイン（ファイル一覧）・中央ペイン（エディタ / Markdownプレビュー）・
+    右ペイン（TODOリスト）の横3ペイン構成で、
     1秒の Debounce により自動保存を行う。
     """
 
@@ -139,6 +141,8 @@ class App(ctk.CTk):
         # 現在のツリー構造
         self._current_tree: list[dict] = []
         self._current_row: int = 0
+        self._displayed_nodes: list[dict] = []       # ドラッグ&ドロップ用ノード情報
+        self._drag_data: dict | None = None          # ドラッグ中のデータ
 
         # ---- UI の構築 ----
         self._build_layout()
@@ -146,21 +150,24 @@ class App(ctk.CTk):
         # ---- ウィンドウ表示後に pywinstyles を適用 ----
         self.after(50, self._apply_win11_style)
 
-        # ---- 起動時にファイル一覧を読み込む ----
+        # ---- 起動時にファイル一覧とTODOを読み込む ----
         self.after(100, self._refresh_file_list)
+        self.after(100, self._refresh_todo_list)
 
     # =============================================================
     # レイアウト構築
     # =============================================================
 
     def _build_layout(self) -> None:
-        """左右ペインのレイアウトを構築する"""
+        """左・中央・右の横3ペインレイアウトを構築する"""
         self.grid_columnconfigure(0, weight=0, minsize=SIDEBAR_WIDTH)
         self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(2, weight=0, minsize=TODO_PANE_WIDTH)
         self.grid_rowconfigure(0, weight=1)
 
         self._build_sidebar()
         self._build_editor_pane()
+        self._build_todo_pane()
 
     def _build_sidebar(self) -> None:
         """左サイドバー（新規作成ボタン＋ファイル一覧）を構築する"""
@@ -187,10 +194,31 @@ class App(ctk.CTk):
         self.file_list_frame = ctk.CTkScrollableFrame(
             self.sidebar,
             fg_color="transparent",
-            label_text="",
+            label_text="ファイル",
+            label_font=ctk.CTkFont(family=FONT_FAMILY, size=FONT_SIZE_LIST, weight="bold")
         )
         self.file_list_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=4)
         self.file_list_frame.grid_columnconfigure(0, weight=1)
+
+    def _build_todo_pane(self) -> None:
+        """右TODOペイン（TODOリスト専用の独立したペイン）を構築する"""
+        self.todo_pane = ctk.CTkFrame(
+            self, width=TODO_PANE_WIDTH, corner_radius=0, fg_color=("gray90", "gray15")
+        )
+        self.todo_pane.grid(row=0, column=2, sticky="nsew")
+        self.todo_pane.grid_propagate(False)
+        self.todo_pane.grid_rowconfigure(0, weight=1)
+        self.todo_pane.grid_columnconfigure(0, weight=1)
+
+        # TODOリストを格納するスクロール可能なフレーム
+        self.todo_list_frame = ctk.CTkScrollableFrame(
+            self.todo_pane,
+            fg_color="transparent",
+            label_text="TODO リスト",
+            label_font=ctk.CTkFont(family=FONT_FAMILY, size=FONT_SIZE_LIST, weight="bold")
+        )
+        self.todo_list_frame.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.todo_list_frame.grid_columnconfigure(0, weight=1)
 
     def _build_editor_pane(self) -> None:
         """右エディタペイン（タイトルバー＋タブ＋テキストエリア / プレビュー）を構築する"""
@@ -359,6 +387,8 @@ class App(ctk.CTk):
         for widget in self.file_list_frame.winfo_children():
             widget.destroy()
 
+        self._displayed_nodes.clear()
+
         self._current_tree = storage.get_file_tree()
 
         if not self._current_tree:
@@ -377,7 +407,7 @@ class App(ctk.CTk):
 
     def _render_tree_nodes(self, nodes: list[dict], depth: int, active_path: Path | None) -> None:
         """再帰的にツリーノードを描画する"""
-        for node in nodes:
+        for i, node in enumerate(nodes):
             filename = node.get("filename")
             path = storage.NOTES_DIR / filename
             if not path.exists():
@@ -423,6 +453,20 @@ class App(ctk.CTk):
             # イベントバインド
             btn.bind("<Button-3>", lambda e, p=path, n=node: self._show_context_menu(p, n, e))
             
+            # ドラッグ＆ドロップ用イベントバインド
+            node_info = {
+                "node": node,
+                "parent_list": nodes,
+                "index": i,
+                "widget": frm,
+                "depth": depth
+            }
+            self._displayed_nodes.append(node_info)
+
+            btn.bind("<ButtonPress-1>", lambda e, info=node_info: self._on_drag_start(e, info))
+            btn.bind("<B1-Motion>", self._on_drag_motion)
+            btn.bind("<ButtonRelease-1>", self._on_drag_release)
+            
             self._current_row += 1
 
             if is_open and children:
@@ -433,6 +477,195 @@ class App(ctk.CTk):
         node["is_open"] = not node.get("is_open", False)
         storage.save_tree(self._current_tree)
         self._refresh_file_list(select_path=self._current_path)
+
+    # =============================================================
+    # ドラッグ＆ドロップ機能 (ファイル一覧)
+    # =============================================================
+
+    def _on_drag_start(self, event: tk.Event, node_info: dict) -> None:
+        """ドラッグ開始時の処理"""
+        self._drag_data = {
+            "info": node_info,
+            "y": event.y_root,
+        }
+        # 軽く色を変えてドラッグ中であることを示す
+        node_info["widget"].configure(fg_color=("gray85", "gray25"))
+
+    def _on_drag_motion(self, event: tk.Event) -> None:
+        """ドラッグ中の処理（インジケーター表示等）"""
+        if not self._drag_data:
+            return
+        
+        # ドラッグの閾値判定
+        if abs(event.y_root - self._drag_data["y"]) < DRAG_THRESHOLD:
+            return
+
+        # 現在のマウスY座標（画面全体）から一番近いノードを探す
+        closest_info = None
+        min_dist = float("inf")
+
+        for info in self._displayed_nodes:
+            widget = info["widget"]
+            wy = widget.winfo_rooty()
+            wh = widget.winfo_height()
+            center_y = wy + wh / 2
+            dist = abs(event.y_root - center_y)
+            if dist < min_dist:
+                min_dist = dist
+                closest_info = info
+
+            # 全てのハイライトをリセット（ドラッグ元以外）
+            if info != self._drag_data["info"]:
+                info["widget"].configure(fg_color="transparent")
+
+        if closest_info and closest_info != self._drag_data["info"]:
+            # ターゲットが上半分か下半分かで色や表示を変えることもできるが、
+            # シンプルにターゲットの背景色を変える
+            closest_info["widget"].configure(fg_color=("lightblue", "darkblue"))
+
+    def _on_drag_release(self, event: tk.Event) -> None:
+        """ドラッグ終了（ドロップ）時の処理"""
+        if not self._drag_data:
+            return
+            
+        dragged_info = self._drag_data["info"]
+        self._drag_data = None
+
+        # ドラッグの閾値判定（単なるクリックだった場合は何もしない）
+        if abs(event.y_root - dragged_info["widget"].winfo_rooty()) < DRAG_THRESHOLD:
+            self._refresh_file_list(select_path=self._current_path)
+            return
+
+        # 一番近いノードを探す
+        closest_info = None
+        min_dist = float("inf")
+        is_above = True
+
+        for info in self._displayed_nodes:
+            widget = info["widget"]
+            wy = widget.winfo_rooty()
+            wh = widget.winfo_height()
+            center_y = wy + wh / 2
+            dist = abs(event.y_root - center_y)
+            if dist < min_dist:
+                min_dist = dist
+                closest_info = info
+                # 上半分に落としたか下半分に落としたか
+                is_above = event.y_root < center_y
+
+        if not closest_info or closest_info == dragged_info:
+            self._refresh_file_list(select_path=self._current_path)
+            return
+
+        # ツリーの移動処理
+        dragged_node = dragged_info["node"]
+        old_parent_list = dragged_info["parent_list"]
+        
+        target_node = closest_info["node"]
+        target_parent_list = closest_info["parent_list"]
+        target_index = closest_info["index"]
+
+        # もし対象のリストが同じで、上に移動する場合はインデックスがずれるのを防ぐ
+        if old_parent_list is target_parent_list and dragged_info["index"] < target_index:
+            target_index -= 1
+
+        # ドラッグ元から削除
+        old_parent_list.remove(dragged_node)
+
+        # ドロップ先が「開いているフォルダ」であり、かつ「下半分」にドロップされた場合は
+        # そのフォルダの先頭（子要素の最初）に追加する
+        if not is_above and target_node.get("children") is not None and target_node.get("is_open"):
+            target_node["children"].insert(0, dragged_node)
+        else:
+            # それ以外は、ターゲットの上か下（同じ階層）に挿入する
+            insert_index = target_index if is_above else target_index + 1
+            target_parent_list.insert(insert_index, dragged_node)
+
+        # 永続化して再描画
+        storage.save_tree(self._current_tree)
+        self._refresh_file_list(select_path=self._current_path)
+
+    # =============================================================
+    # TODO機能
+    # =============================================================
+
+    def _refresh_todo_list(self) -> None:
+        """
+        左ペインのTODOリストを再描画する。
+        """
+        # 既存ウィジェット削除
+        for widget in self.todo_list_frame.winfo_children():
+            widget.destroy()
+
+        all_todos = todo.get_all_todos()
+        
+        if not all_todos:
+            lbl = ctk.CTkLabel(
+                self.todo_list_frame,
+                text="TODOはありません",
+                text_color=("gray50", "gray55"),
+                font=ctk.CTkFont(family=FONT_FAMILY, size=FONT_SIZE_LIST),
+            )
+            lbl.grid(row=0, column=0, pady=20)
+            return
+
+        current_row = 0
+        for path, todos in all_todos.items():
+            # タスクグループ（ファイル名）を表示
+            title = storage.get_display_title(path)
+            lbl_title = ctk.CTkLabel(
+                self.todo_list_frame,
+                text=title,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=FONT_SIZE_LIST, weight="bold"),
+                anchor="w",
+                text_color=("gray20", "gray80"),
+                cursor="hand2"
+            )
+            lbl_title.grid(row=current_row, column=0, sticky="ew", pady=(10, 2), padx=5)
+            lbl_title.bind("<Button-1>", lambda e, p=path: self._switch_note(p))
+            current_row += 1
+
+            # 未完了を先に、完了を下にするようにソート
+            sorted_todos = sorted(todos, key=lambda t: t.is_checked)
+
+            for t in sorted_todos:
+                var = ctk.BooleanVar(value=t.is_checked)
+                
+                # 取り消し線表現（CTkではサポートされていないので文字色で表現）
+                text_color = ("gray60", "gray50") if t.is_checked else ("gray10", "gray95")
+                text_font = ctk.CTkFont(family=FONT_FAMILY, size=FONT_SIZE_LIST)
+
+                chk = ctk.CTkCheckBox(
+                    self.todo_list_frame,
+                    text=t.text,
+                    variable=var,
+                    font=text_font,
+                    text_color=text_color,
+                    # チェックされた時の処理 (変数の値ではなくイベント起因で発火)
+                    command=lambda p=path, idx=t.line_index, v=var: self._on_todo_checked(p, idx, v.get()),
+                    hover=True
+                )
+                chk.grid(row=current_row, column=0, sticky="w", padx=15, pady=2)
+                current_row += 1
+
+    def _on_todo_checked(self, path: Path, line_index: int, is_checked: bool) -> None:
+        """
+        左ペインのTODOチェックボックスが変更された際に呼び出され、
+        対応するファイルのテキストを更新する。エディタ表示中の場合はエディタも更新する。
+        """
+        if self._current_path == path:
+            # 現在エディタに表示中の場合、エディタのテキストを編集して自動保存を発火させる
+            content = self.text_editor.get("1.0", "end-1c")
+            new_content = todo.toggle_todo_in_text(content, line_index, is_checked)
+            self.text_editor.delete("1.0", "end")
+            self.text_editor.insert("1.0", new_content)
+            self._force_save()
+        else:
+            # 非表示のファイルの場合、直接DB(ファイル)を書き換える
+            content = storage.read_note(path)
+            new_content = todo.toggle_todo_in_text(content, line_index, is_checked)
+            storage.write_note(path, new_content)
+            self._refresh_todo_list()
 
     # =============================================================
     # コンテキストメニュー（階層操作・ゴミ箱）
@@ -610,6 +843,7 @@ class App(ctk.CTk):
         self.text_editor.insert("1.0", content)
 
         self._update_title_from_content(content)
+        self._refresh_todo_list()  # TODOリストも再描画
         self.lbl_save_status.configure(text="")
         self._is_loading = False
 
@@ -658,6 +892,7 @@ class App(ctk.CTk):
             self._last_first_line = first_line
 
         storage.write_note(self._current_path, content)
+        self._refresh_todo_list()  # 保存時にTODOリストも更新
         self.lbl_save_status.configure(text="✓ 保存済み")
 
     def _force_save(self) -> None:
@@ -683,6 +918,7 @@ class App(ctk.CTk):
             self._last_first_line = first_line
 
         storage.write_note(self._current_path, content)
+        self._refresh_todo_list()  # 保存時にTODOリストも更新
         self.lbl_save_status.configure(text="✓ 保存済み")
 
     # =============================================================
