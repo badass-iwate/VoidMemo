@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
 
@@ -136,6 +137,7 @@ class App(ctk.CTk):
         self._save_timer: str | None = None          # Debounce タイマーID
         self._is_loading: bool = False               # 読み込み中フラグ（誤保存防止）
         self._last_first_line: str = ""              # 直前の1行目（リネーム判定用）
+        self._last_title_line: str = ""              # タイトルバー表示中の1行目（変化検知用）
         self._current_tab: str = "edit"              # 現在のタブ ("edit" | "preview")
 
         # 現在のツリー構造
@@ -143,6 +145,7 @@ class App(ctk.CTk):
         self._current_row: int = 0
         self._displayed_nodes: list[dict] = []       # ドラッグ&ドロップ用ノード情報
         self._drag_data: dict | None = None          # ドラッグ中のデータ
+        self._file_buttons: dict = {}                # ファイルボタンのキャッシュ（Path→CTkButton）
 
         # ---- UI の構築 ----
         self._build_layout()
@@ -308,6 +311,14 @@ class App(ctk.CTk):
             fg_color=("white", "gray17"),
         )
         self.text_editor.grid(row=2, column=0, sticky="nsew")
+
+        # IME入力中（変換前）と確定後でフォントサイズがずれる問題の修正。
+        # CTkFont は CustomTkinter が DPI を考慮してサイズを加工するため、
+        # IME が参照するシステムフォントとサイズが小さくなる。
+        # tkinter.font.Font オブジェクトを内部 _textbox に直接小用することで統一する。
+        self._editor_font = tkfont.Font(family=FONT_FAMILY, size=FONT_SIZE_EDITOR)
+        self.text_editor._textbox.configure(font=self._editor_font)
+
         self.text_editor.bind("<KeyRelease>", self._on_key_release)
 
         # ---- Markdown プレビューフレーム ----
@@ -388,6 +399,7 @@ class App(ctk.CTk):
             widget.destroy()
 
         self._displayed_nodes.clear()
+        self._file_buttons.clear()  # ボタンキャッシュをリセット
 
         self._current_tree = storage.get_file_tree()
 
@@ -449,6 +461,7 @@ class App(ctk.CTk):
                 command=lambda p=path: self._switch_note(p),
             )
             btn.grid(row=0, column=1, sticky="ew")
+            self._file_buttons[path] = btn  # ボタン参照をキャッシュに保存
 
             # イベントバインド
             btn.bind("<Button-3>", lambda e, p=path, n=node: self._show_context_menu(p, n, e))
@@ -477,6 +490,21 @@ class App(ctk.CTk):
         node["is_open"] = not node.get("is_open", False)
         storage.save_tree(self._current_tree)
         self._refresh_file_list(select_path=self._current_path)
+
+    def _update_selection_only(self, active_path: Path | None) -> None:
+        """
+        ファイルリストの選択状態のみを更新する。
+        ウィジェットの再生成を行わず、ボタンの色変更のみで処理するため高速。
+
+        Args:
+            active_path: 選択状態にするファイルパス
+        """
+        self._current_path = active_path
+        for path, btn in self._file_buttons.items():
+            is_selected = (path == active_path)
+            btn.configure(
+                fg_color=("gray75", "gray30") if is_selected else "transparent"
+            )
 
     # =============================================================
     # ドラッグ＆ドロップ機能 (ファイル一覧)
@@ -810,6 +838,7 @@ class App(ctk.CTk):
         """
         ファイル一覧のボタンクリック時に現在のファイルを強制保存し、
         選択されたファイルへ切り替える。
+        ファイルリストの再生成は行わず、選択状態の色変更のみで処理する（高速化）。
 
         Args:
             path: 切り替え先のファイルパス
@@ -817,7 +846,8 @@ class App(ctk.CTk):
         if path == self._current_path:
             return
         self._force_save()
-        self._refresh_file_list(select_path=path)
+        # フルリビルドではなく選択色の更新のみ行う（ちらつき防止）
+        self._update_selection_only(path)
         self._load_note(path)
 
     def _load_note(self, path: Path) -> None:
@@ -843,6 +873,8 @@ class App(ctk.CTk):
         self.text_editor.insert("1.0", content)
 
         self._update_title_from_content(content)
+        # タイトル最適化用の変数を同期しておく
+        self._last_title_line = content.split("\n")[0].strip() if content else ""
         self._refresh_todo_list()  # TODOリストも再描画
         self.lbl_save_status.configure(text="")
         self._is_loading = False
@@ -855,12 +887,21 @@ class App(ctk.CTk):
         """
         キー離し時に呼ばれるイベントハンドラ。
         既存タイマーをキャンセルして 1秒後に保存をスケジュールする（Debounce）。
+        タイトルバーは1行目が変化した場合のみ更新する（全文取得を避けて高速化）。
         """
         if self._is_loading or self._current_path is None:
             return
 
-        content = self.text_editor.get("1.0", "end-1c")
-        self._update_title_from_content(content)
+        # 1行目のみ取得してタイトル更新を最小コストで行う
+        first_line = self.text_editor.get("1.0", "1.end").strip()
+        if first_line != self._last_title_line:
+            self._last_title_line = first_line
+            if first_line:
+                self.lbl_title.configure(text=first_line)
+            elif self._current_path is not None:
+                self.lbl_title.configure(text=self._current_path.stem)
+            else:
+                self.lbl_title.configure(text="新規メモ")
 
         if self._save_timer is not None:
             self.after_cancel(self._save_timer)
@@ -888,16 +929,20 @@ class App(ctk.CTk):
                 self._replace_name_in_tree(self._current_tree, self._current_path.name, new_path.name)
                 storage.save_tree(self._current_tree)
                 self._current_path = new_path
+                # リネーム時はキャッシュが無効になるのでフルリビルドが必要
                 self._refresh_file_list(select_path=new_path)
             self._last_first_line = first_line
 
         storage.write_note(self._current_path, content)
-        self._refresh_todo_list()  # 保存時にTODOリストも更新
+        # TODOマーカーが含まれるファイルのみTODOリストを更新する（全ファイルスキャンを最小化）
+        if "- [ ]" in content or "- [x]" in content:
+            self._refresh_todo_list()
         self.lbl_save_status.configure(text="✓ 保存済み")
 
     def _force_save(self) -> None:
         """
         タイマー待機中でもすぐにファイルを保存する（ファイル切り替え時などに使用）。
+        TODOリストの更新は行わない（直後に _load_note が呼ばれるため冗長になるのを避ける）。
         """
         if self._save_timer is not None:
             self.after_cancel(self._save_timer)
@@ -915,10 +960,12 @@ class App(ctk.CTk):
                 self._replace_name_in_tree(self._current_tree, self._current_path.name, new_path.name)
                 storage.save_tree(self._current_tree)
                 self._current_path = new_path
+                # リネームが発生した場合のみキャッシュを更新
+                self._refresh_file_list(select_path=self._current_path)
             self._last_first_line = first_line
 
         storage.write_note(self._current_path, content)
-        self._refresh_todo_list()  # 保存時にTODOリストも更新
+        # _refresh_todo_list() は呼ばない（直後の _load_note で更新されるため）
         self.lbl_save_status.configure(text="✓ 保存済み")
 
     # =============================================================
@@ -965,10 +1012,25 @@ class App(ctk.CTk):
 # ====================================================================
 if __name__ == "__main__":
     # Windows で高DPI対応（ぼやけ防止）
+    # PROCESS_PER_MONITOR_DPI_AWARE (=2) を設定してフォントのぼやけを最小化
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         pass
 
     app = App()
+
+    # ---- Windowsフォントレンダリング最適化 ----
+    # tkinter内部フォントをYu Gothic UIに統一してClearTypeアンチエイリアスを活かす
+    try:
+        import tkinter.font as tkfont
+        for font_name in ("TkDefaultFont", "TkTextFont", "TkFixedFont", "TkMenuFont", "TkHeadingFont"):
+            try:
+                f = tkfont.nametofont(font_name)
+                f.configure(family="Yu Gothic UI")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     app.mainloop()
